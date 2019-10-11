@@ -16,4 +16,5 @@ buildNumber.properties
 .idea/vcs.xml
 pom.xml
 rules.txt
-
+/.idea
+AnimalRec.iml
