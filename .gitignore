@@ -14,7 +14,6 @@ buildNumber.properties
 
 .gitignore
 .idea/vcs.xml
-pom.xml
 /.idea
 AnimalRec.iml
 
