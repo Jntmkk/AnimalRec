@@ -1,6 +1,5 @@
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.util.JSONPObject;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
@@ -12,21 +11,20 @@ import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
 import java.util.*;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 public class AnimalRec {
+    private Set<Rule> unUsedRules = new HashSet<Rule>();
+    private Set<Rule> usedRules = new HashSet<Rule>();
+    private Set<String> truths = new HashSet<String>();
+    private ArrayList<Truth> truthsCollection = new ArrayList<Truth>();
     private Rule currentUseRule;
     private int needMatchTruthNum = 0;
+    private ArrayList<Rule> matchedRules = new ArrayList<Rule>();
+    //    private ArrayList<Rule> availableRules = new ArrayList<Rule>();
+    private Set<String> keywords = new HashSet<String>();
     private String[] inputs;
-    private Set<Rule> usedRules = new HashSet<Rule>();
-    private MongoClient mongoClient;
-    private MongoDatabase mongoDatabase;
-    private ArrayList<Rule> unusedRules = new ArrayList<Rule>();
-    private ArrayList<Rule> availableRules = new ArrayList<Rule>();
-    private TruthCollection truthCollection = new TruthCollection();
-    private RulesCollection rulesCollection;
     private Logger logger;
 
     public AnimalRec() throws IOException {
@@ -35,19 +33,6 @@ public class AnimalRec {
 
     public void insertRule(Rule rule) {
 
-//        mongoDatabase.getCollection("rules").drop();
-        MongoCollection<Document> rulesCollection = mongoDatabase.getCollection("rules");
-
-        rulesCollection.createIndex(Document.parse("{\"md5\":1}，{\"unique\":true}"));
-        ObjectMapper mapper = new ObjectMapper();
-        String json = "";
-        try {
-            json = mapper.writeValueAsString(rule);
-//            rulesCollection.insertOne(Document.parse(json));
-            System.out.println(json);
-        } catch (JsonProcessingException e) {
-            e.printStackTrace();
-        }
     }
 
     private void run() throws IOException {
@@ -75,21 +60,9 @@ public class AnimalRec {
     private void init() {
         logger = Logger.getLogger("jntm.cf");
         logger.setLevel(Level.WARNING);
-        try {
-            // 连接到 mongodb 服务
-            mongoClient = MongoClients.create();
-            // 连接到数据库
-            mongoDatabase = mongoClient.getDatabase("animalRec");
-            System.out.println("Connect to database successfully");
-
-        } catch (Exception e) {
-            System.err.println(e.getClass().getName() + ": " + e.getMessage());
-        }
-
     }
 
     private void initRules() {
-        rulesCollection = new RulesCollection();
         BufferedReader bufferedReader = null;
         try {
             bufferedReader = new BufferedReader(new FileReader("rules.txt"));
@@ -99,12 +72,11 @@ public class AnimalRec {
                 if (split.length < 3 || split[0].startsWith("#"))
                     continue;
                 Rule rule = new Rule(MD5.getMD5(s), split);
-                unusedRules.add(rule);
+                unUsedRules.add(rule);
                 insertRule(rule);
-                rulesCollection.rules.add(rule);
-                truthCollection.unUsedRules.add(rule);
+                unUsedRules.add(rule);
                 for (int i = 1; i < split.length - 1; i++)
-                    rulesCollection.keyWords.add(split[i]);
+                    keywords.add(split[i]);
             }
         } catch (FileNotFoundException e) {
             e.printStackTrace();
@@ -118,44 +90,70 @@ public class AnimalRec {
         /**
          * 模拟用户输入
          */
-        inputs = new String[]{"产奶", "有黑色条纹", "反刍"};
+        inputs = new String[]{"有羽毛", "会游泳", "黑白二色"};
         needMatchTruthNum = inputs.length;
         for (String s : inputs) {
-            if (!rulesCollection.keyWords.contains(s)) {
+            if (!keywords.contains(s)) {
                 System.out.println("关键字: " + s + " 不符合要求或未定义");
                 break;
+            } else {
+                truthsCollection.add(new Truth("input", s));
+                truths.add(s);
             }
-            truthCollection.truthKeyWord.add(s);
+
         }
     }
 
     private boolean updateUnusedRules() {
-        if (truthCollection.unUsedRules.size() <= 0)
+        if (unUsedRules.size() <= 0)
             return false;
         return true;
     }
 
     private boolean matchUnusedAndTruth() {
+        boolean flag = false;
         ArrayList<WRule> wRules = new ArrayList<WRule>();
-        Set<Rule> unusedRules = truthCollection.unUsedRules;
+        Set<Rule> unusedRules = unUsedRules;
         Iterator<Rule> iterator = unusedRules.iterator();
         while (iterator.hasNext()) {
             WRule next = new WRule(iterator.next());
             for (String s : next.rule.requires) {
-                if (truthCollection.truthKeyWord.contains(s))
+                if (truths.contains(s))
                     next.score += 1;
             }
-            if (next.score == next.rule.requires.size())
-                wRules.add(next);
+            if (next.score == 0)
+                continue;
+            next.score = next.score * 100 / next.rule.requires.size();
+//            if (next.score == next.rule.requires.size())
+
+            wRules.add(next);
+
         }
-        if (wRules.size() <= 0)
-            return false;
+
+
         Collections.sort(wRules, new Comparator<WRule>() {
             public int compare(WRule o1, WRule o2) {
                 return o2.score - o1.score;
             }
         });
-        availableRules.add(wRules.get(0).rule);
+//        availableRules.add(wRules.get(0).rule);
+
+        Iterator<WRule> wRuleListIterator = wRules.iterator();
+        while (wRuleListIterator.hasNext()) {
+            WRule wRule = wRuleListIterator.next();
+            if (wRule.score == 100) {
+                flag = true;
+                continue;
+            }
+            if (wRule.score < 100 && flag)
+                wRuleListIterator.remove();
+        }
+
+        for (WRule wRule : wRules) {
+            matchedRules.add(wRule.rule);
+        }
+        if (!flag)
+            return false;
         return true;
     }
 
@@ -164,15 +162,15 @@ public class AnimalRec {
     }
 
     private void inference() {
-        for (int i = 0; i < availableRules.size(); i++) {
-            Rule rule = availableRules.get(i);
+        Iterator<Rule> iterator = matchedRules.iterator();
+        while (iterator.hasNext()) {
+            Rule rule = iterator.next();
             System.out.println("Use:" + rule);
-            truthCollection.unUsedRules.remove(rule);
-            truthCollection.truthKeyWord.add(rule.results.get(0));
-            truthCollection.truths.add(new Truth(rule.index, rule.results.get(0)));
-            unusedRules.remove(rule);
-            usedRules.add(rule);
-            availableRules.remove(rule);// ? bug
+            unUsedRules.remove(rule);
+            keywords.add(rule.results.get(0));
+            truthsCollection.add(new Truth(rule.index, rule.results.get(0)));
+            truths.add(rule.results.get(0));
+            iterator.remove();
             needMatchTruthNum -= (rule.requires.size() - rule.results.size());
             currentUseRule = rule;
         }
